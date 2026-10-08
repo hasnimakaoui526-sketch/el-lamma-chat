@@ -16,35 +16,20 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
-      # 1. تحميل المستودع
-      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Java
-      # --------------------------------------------------
       - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      # --------------------------------------------------
-      # 3. Android SDK
-      # --------------------------------------------------
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      # --------------------------------------------------
-      # 4. البحث عن نسخة 1.1.8 فقط
-      # --------------------------------------------------
       - name: Locate FINAL 1.1.8 source
         shell: bash
         run: |
@@ -65,9 +50,8 @@ jobs:
           )
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ElLamma_FINAL_1.1.8_FINAL_FIXED.zip was not found."
-            echo
-            echo "Available ElLamma ZIP files:"
+            echo "ERROR: FINAL 1.1.8 source ZIP was not found."
+            echo "Available ZIP files:"
             find . -type f -name '*.zip' -print || true
             exit 1
           fi
@@ -82,15 +66,12 @@ jobs:
 
           if [ ! -f "extracted/settings.gradle" ] && \
              [ ! -f "extracted/settings.gradle.kts" ]; then
-            echo "ERROR: Android project was not found inside 1.1.8 ZIP."
+            echo "ERROR: Android project was not found inside FINAL 1.1.8 ZIP."
             exit 1
           fi
 
           echo "PROJECT_ROOT=extracted" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
-      # 5. التحقق من أن المصدر هو 1.1.8 فعلًا
-      # --------------------------------------------------
       - name: Verify FINAL source
         shell: bash
         run: |
@@ -105,38 +86,57 @@ jobs:
           test -f "$JAVA_FILE"
 
           echo "Checking version..."
-
           grep -Fq "versionName '1.1.8'" "$GRADLE_FILE"
 
-          echo "Checking production Supabase API..."
-
+          echo "Checking production API..."
           grep -Fq \
             "https://bfbzgzletoaxyazugjex.supabase.co/functions/v1/api" \
             "$HTML_FILE"
 
           echo "Checking presence..."
-
           grep -Fq "/presence" "$HTML_FILE"
 
           echo "Checking profile avatar..."
-
           grep -Fq "/profile/avatar" "$HTML_FILE"
 
           echo "Checking owner AI..."
-
           grep -Fq "/owner/ai" "$HTML_FILE"
 
-          echo "Checking logout..."
+          echo "Checking announcements..."
+          grep -Fq "/announcements" "$HTML_FILE"
 
+          echo "Checking friend wall..."
+          grep -Fq "/friend-wall" "$HTML_FILE"
+
+          echo "Checking rich users..."
+          grep -Fq "/rich" "$HTML_FILE"
+
+          echo "Checking private messages..."
+          grep -Fq "/private/conversations" "$HTML_FILE"
+
+          echo "Checking rooms..."
+          grep -Fq "/rooms" "$HTML_FILE"
+
+          echo "Checking games..."
+          grep -Fq "/games/" "$HTML_FILE"
+
+          echo "Checking tournaments..."
+          grep -Fq "/tournaments" "$HTML_FILE"
+
+          echo "Checking seasons..."
+          grep -Fq "/seasons/" "$HTML_FILE"
+
+          echo "Checking cosmetics..."
+          grep -Fq "/cosmetics" "$HTML_FILE"
+
+          echo "Checking logout..."
           grep -Fq "bottomLogout" "$HTML_FILE"
           grep -Fq "logout()" "$HTML_FILE"
 
           echo "Checking Android file chooser..."
-
           grep -Fq "onShowFileChooser" "$JAVA_FILE"
 
           echo "Checking fullscreen..."
-
           grep -Fq "enterFullscreen" "$JAVA_FILE"
 
           echo
@@ -145,9 +145,6 @@ jobs:
           echo "VERSION: 1.1.8"
           echo "========================================"
 
-      # --------------------------------------------------
-      # 6. تثبيت Gradle
-      # --------------------------------------------------
       - name: Install Gradle 8.9
         shell: bash
         run: |
@@ -162,9 +159,6 @@ jobs:
 
           ./gradle-8.9/bin/gradle --version
 
-      # --------------------------------------------------
-      # 7. بناء APK
-      # --------------------------------------------------
       - name: Build FINAL APK
         shell: bash
         run: |
@@ -178,8 +172,6 @@ jobs:
 
           if [ ! -f "$APK" ]; then
             echo "ERROR: APK was not generated."
-            echo
-            echo "Build outputs:"
             find app/build/outputs -type f -print || true
             exit 1
           fi
@@ -190,30 +182,20 @@ jobs:
           echo "APK CREATED:"
           ls -lh "$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.apk"
 
-      # --------------------------------------------------
-      # 8. التحقق من توقيع APK
-      # --------------------------------------------------
       - name: Verify APK signature
         shell: bash
         run: |
           set -e
 
           APK="$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.apk"
-
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
 
-          if [ ! -f "$APKSIGNER" ]; then
-            echo "ERROR: apksigner not found."
-            exit 1
-          fi
+          test -f "$APKSIGNER"
 
           "$APKSIGNER" verify --verbose "$APK"
 
           echo "APK SIGNATURE VERIFICATION PASSED"
 
-      # --------------------------------------------------
-      # 9. استخراج HTML من APK والتحقق من المزايا
-      # --------------------------------------------------
       - name: Verify FINAL APK contents
         shell: bash
         run: |
@@ -230,7 +212,7 @@ jobs:
 
           test -s final-html-check.html
 
-          echo "Checking API..."
+          echo "Checking production API..."
           grep -Fq \
             "https://bfbzgzletoaxyazugjex.supabase.co/functions/v1/api" \
             final-html-check.html
@@ -244,6 +226,30 @@ jobs:
           echo "Checking owner AI..."
           grep -Fq "/owner/ai" final-html-check.html
 
+          echo "Checking announcements..."
+          grep -Fq "/announcements" final-html-check.html
+
+          echo "Checking friend wall..."
+          grep -Fq "/friend-wall" final-html-check.html
+
+          echo "Checking rich users..."
+          grep -Fq "/rich" final-html-check.html
+
+          echo "Checking private messages..."
+          grep -Fq "/private/conversations" final-html-check.html
+
+          echo "Checking games..."
+          grep -Fq "/games/" final-html-check.html
+
+          echo "Checking tournaments..."
+          grep -Fq "/tournaments" final-html-check.html
+
+          echo "Checking seasons..."
+          grep -Fq "/seasons/" final-html-check.html
+
+          echo "Checking cosmetics..."
+          grep -Fq "/cosmetics" final-html-check.html
+
           echo "Checking logout..."
           grep -Fq "bottomLogout" final-html-check.html
           grep -Fq "logout()" final-html-check.html
@@ -253,9 +259,6 @@ jobs:
           echo "FINAL APK CONTENT VERIFICATION PASSED"
           echo "========================================"
 
-      # --------------------------------------------------
-      # 10. SHA256
-      # --------------------------------------------------
       - name: Generate SHA256
         shell: bash
         run: |
@@ -265,9 +268,6 @@ jobs:
             ElLamma-FINAL-1.1.8.apk \
             | tee ElLamma-FINAL-1.1.8.sha256
 
-      # --------------------------------------------------
-      # 11. رفع النسخة النهائية
-      # --------------------------------------------------
       - name: Upload FINAL APK
         uses: actions/upload-artifact@v4
         with:
