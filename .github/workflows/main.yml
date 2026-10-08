@@ -41,16 +41,20 @@ jobs:
             exit 1
           fi
 
+          echo "Using ZIP: $ZIP_FILE"
+
           rm -rf extracted
           mkdir -p extracted
 
           unzip -q "$ZIP_FILE" -d extracted
 
           if [ ! -f "extracted/settings.gradle" ] && [ ! -f "extracted/settings.gradle.kts" ]; then
-            echo "ERROR: Android project was not found"
-            find extracted -maxdepth 3 -type f
+            echo "ERROR: Android project was not found."
+            find extracted -maxdepth 3 -type f | sort
             exit 1
           fi
+
+          echo "Android project detected."
 
           echo "PROJECT_ROOT=extracted" >> "$GITHUB_ENV"
 
@@ -72,9 +76,21 @@ jobs:
           set -e
 
           cd "$PROJECT_ROOT"
+
           gradle :app:assembleRelease --no-daemon
 
-      - name: Sign Release APK with permanent key
+          APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: Release APK was not generated."
+            find app/build/outputs -type f -maxdepth 6 || true
+            exit 1
+          fi
+
+          echo "Release APK generated successfully:"
+          ls -lh "$APK"
+
+      - name: Validate permanent signing secrets
         shell: bash
         env:
           KEYSTORE_PASSWORD: ${{ secrets.ELLAMMA_KEYSTORE_PASSWORD }}
@@ -83,90 +99,133 @@ jobs:
         run: |
           set -e
 
-          UNSIGNED="$PROJECT_ROOT/app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED="$PROJECT_ROOT/app/build/outputs/apk/release/ElLamma-release-aligned.apk"
-          SIGNED="$PROJECT_ROOT/app/build/outputs/apk/release/ElLamma-release.apk"
-          KEYSTORE="$RUNNER_TEMP/ellamma-release.keystore"
-
-          echo "Checking release APK..."
-
-          if [ ! -f "$UNSIGNED" ]; then
-            echo "ERROR: Unsigned APK was not generated"
-            find "$PROJECT_ROOT" -type f -name "*.apk" -print
-            exit 1
-          fi
-
-          echo "Checking signing secrets..."
+          echo "Checking permanent signing secrets..."
 
           if [ -z "$KEYSTORE_PASSWORD" ]; then
-            echo "ERROR: ELLAMMA_KEYSTORE_PASSWORD is missing"
+            echo "ERROR: ELLAMMA_KEYSTORE_PASSWORD is missing."
             exit 1
           fi
 
           if [ -z "$KEY_ALIAS" ]; then
-            echo "ERROR: ELLAMMA_KEY_ALIAS is missing"
+            echo "ERROR: ELLAMMA_KEY_ALIAS is missing."
             exit 1
           fi
 
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "ERROR: ELLAMMA_KEYSTORE_BASE64 is missing"
+            echo "ERROR: ELLAMMA_KEYSTORE_BASE64 is missing."
             exit 1
           fi
+
+          echo "All three signing secrets are present."
+
+      - name: Decode permanent keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ELLAMMA_KEYSTORE_BASE64 }}
+        run: |
+          set -e
+
+          KEYSTORE="$RUNNER_TEMP/ellamma-release.keystore"
 
           echo "Decoding permanent keystore..."
 
-          python3 - "$KEYSTORE" "$KEYSTORE_BASE64" <<'PY'
-          import base64
-          import sys
-
-          output_file = sys.argv[1]
-          encoded = sys.argv[2]
-
-          encoded = "".join(encoded.split())
-
-          encoded += "=" * ((4 - len(encoded) % 4) % 4)
-
-          try:
-              data = base64.b64decode(encoded, validate=True)
-          except Exception as e:
-              print("ERROR: Invalid ELLAMMA_KEYSTORE_BASE64")
-              print(str(e))
-              sys.exit(1)
-
-          if not data:
-              print("ERROR: Decoded keystore is empty")
-              sys.exit(1)
-
-          with open(output_file, "wb") as f:
-              f.write(data)
-          PY
+          printf '%s' "$KEYSTORE_BASE64" \
+            | tr -d '[:space:]' \
+            | base64 --decode > "$KEYSTORE"
 
           if [ ! -s "$KEYSTORE" ]; then
-            echo "ERROR: Keystore could not be created"
+            echo "ERROR: Decoded keystore is empty."
             exit 1
           fi
 
-          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          echo "Decoded keystore size:"
+          stat -c '%s bytes' "$KEYSTORE"
 
-          if [ ! -x "$BUILD_TOOLS/zipalign" ]; then
-            echo "ERROR: zipalign was not found"
-            exit 1
-          fi
+          echo "KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
 
-          if [ ! -x "$BUILD_TOOLS/apksigner" ]; then
-            echo "ERROR: apksigner was not found"
-            exit 1
-          fi
+      - name: Validate permanent keystore
+        shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ELLAMMA_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ELLAMMA_KEY_ALIAS }}
+        run: |
+          set -e
 
           echo "Validating permanent keystore..."
 
-          keytool -list \
-            -keystore "$KEYSTORE" \
+          if keytool \
+            -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            > /tmp/keytool-list.txt \
+            2> /tmp/keytool-error.txt; then
+
+            echo "Keystore password accepted."
+
+          else
+            echo
+            echo "ERROR: The permanent keystore could not be opened."
+            echo
+            echo "This usually means one of these is wrong:"
+            echo "1. ELLAMMA_KEYSTORE_PASSWORD"
+            echo "2. ELLAMMA_KEYSTORE_BASE64"
+            echo "3. The keystore itself is invalid or corrupted."
+            echo
+            echo "keytool diagnostic:"
+            cat /tmp/keytool-error.txt
+            exit 1
+          fi
+
+          echo
+          echo "Available aliases:"
+          cat /tmp/keytool-list.txt
+
+          echo
+          echo "Checking requested alias: $KEY_ALIAS"
+
+          if keytool \
+            -list \
+            -keystore "$KEYSTORE_PATH" \
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS" \
-            >/dev/null
+            > /tmp/keytool-alias.txt \
+            2> /tmp/keytool-alias-error.txt; then
 
-          echo "Keystore validation successful."
+            echo "Alias '$KEY_ALIAS' exists."
+
+          else
+            echo
+            echo "ERROR: Alias '$KEY_ALIAS' was not found."
+            echo
+            echo "Alias diagnostic:"
+            cat /tmp/keytool-alias-error.txt
+            echo
+            echo "Available aliases:"
+            cat /tmp/keytool-list.txt
+            exit 1
+          fi
+
+          echo
+          echo "Permanent keystore validation successful."
+
+      - name: Align and sign Release APK
+        shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ELLAMMA_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ELLAMMA_KEY_ALIAS }}
+        run: |
+          set -e
+
+          UNSIGNED="$PROJECT_ROOT/app/build/outputs/apk/release/app-release-unsigned.apk"
+          ALIGNED="$PROJECT_ROOT/app/build/outputs/apk/release/ElLamma-release-aligned.apk"
+          SIGNED="$PROJECT_ROOT/app/build/outputs/apk/release/ElLamma-release.apk"
+
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+
+          if [ ! -f "$UNSIGNED" ]; then
+            echo "ERROR: Unsigned APK not found."
+            exit 1
+          fi
 
           echo "Aligning APK..."
 
@@ -177,10 +236,10 @@ jobs:
             "$UNSIGNED" \
             "$ALIGNED"
 
-          echo "Signing APK..."
+          echo "Signing APK with permanent key..."
 
           "$BUILD_TOOLS/apksigner" sign \
-            --ks "$KEYSTORE" \
+            --ks "$KEYSTORE_PATH" \
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass env:KEYSTORE_PASSWORD \
             --key-pass env:KEYSTORE_PASSWORD \
@@ -193,11 +252,13 @@ jobs:
             --verbose \
             "$SIGNED"
 
-          echo "Permanent signing completed successfully."
+          echo
+          echo "========================================"
+          echo "PERMANENT SIGNING SUCCESSFUL"
+          echo "========================================"
 
           ls -lh "$SIGNED"
 
-          rm -f "$KEYSTORE"
           rm -f "$ALIGNED"
 
       - name: Calculate SHA256
@@ -208,16 +269,17 @@ jobs:
           APK="$PROJECT_ROOT/app/build/outputs/apk/release/ElLamma-release.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Signed APK not found"
+            echo "ERROR: Signed APK not found."
             exit 1
           fi
 
           sha256sum "$APK" > app-release-sha256.txt
 
-          echo "SHA256:"
+          echo
+          echo "APK SHA256:"
           cat app-release-sha256.txt
 
-      - name: Upload Signed APK
+      - name: Upload permanent signed APK
         uses: actions/upload-artifact@v4
         with:
           name: ElLamma-Release-Signed-Permanent
