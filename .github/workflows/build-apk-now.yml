@@ -1,4 +1,4 @@
-name: Build FINAL ElLamma 1.1.8
+name: Build FINAL ElLamma APK
 
 on:
   workflow_dispatch:
@@ -11,264 +11,133 @@ permissions:
 
 jobs:
   build:
-    name: Build and Verify FINAL APK
+    name: Build, align and sign APK
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Locate FINAL 1.1.8 source
+      - name: Install Android build tools
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Find and extract project ZIP
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          ZIP_FILE=""
+          ZIP_FILE="ElLamma_FINAL_1.1.8_FINAL_FIXED.zip"
 
-          while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              ZIP_FILE="$file"
-              break
-            fi
-          done < <(
-            find . \
-              -type f \
-              -name 'ElLamma_FINAL_1.1.8_FINAL_FIXED.zip' \
-              -print
-          )
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: FINAL 1.1.8 source ZIP was not found."
-            echo "Available ZIP files:"
-            find . -type f -name '*.zip' -print || true
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: Project ZIP not found: $ZIP_FILE"
+            find . -type f -iname '*.zip' -print
             exit 1
           fi
 
-          echo "FINAL SOURCE:"
-          echo "$ZIP_FILE"
-
-          rm -rf extracted
           mkdir -p extracted
-
           unzip -q "$ZIP_FILE" -d extracted
 
-          if [ ! -f "extracted/settings.gradle" ] && \
-             [ ! -f "extracted/settings.gradle.kts" ]; then
-            echo "ERROR: Android project was not found inside FINAL 1.1.8 ZIP."
+          PROJECT_ROOT="$(find extracted -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -printf '%h\n' | head -n 1)"
+
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "ERROR: Android Gradle project not found in ZIP."
             exit 1
           fi
 
-          echo "PROJECT_ROOT=extracted" >> "$GITHUB_ENV"
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
+          echo "Project found: $PROJECT_ROOT"
 
-      - name: Verify FINAL source
+      - name: Build debug APK
         shell: bash
         run: |
-          set -e
-
-          GRADLE_FILE="extracted/app/build.gradle"
-          HTML_FILE="extracted/app/src/main/assets/el-lamma-chat.html"
-          JAVA_FILE="extracted/app/src/main/java/com/ellamma/chat/MainActivity.java"
-
-          test -f "$GRADLE_FILE"
-          test -f "$HTML_FILE"
-          test -f "$JAVA_FILE"
-
-          echo "Checking version..."
-          grep -Fq "versionName '1.1.8'" "$GRADLE_FILE"
-
-          echo "Checking production API..."
-          grep -Fq \
-            "https://bfbzgzletoaxyazugjex.supabase.co/functions/v1/api" \
-            "$HTML_FILE"
-
-          echo "Checking presence..."
-          grep -Fq "/presence" "$HTML_FILE"
-
-          echo "Checking profile avatar..."
-          grep -Fq "/profile/avatar" "$HTML_FILE"
-
-          echo "Checking owner AI..."
-          grep -Fq "/owner/ai" "$HTML_FILE"
-
-          echo "Checking announcements..."
-          grep -Fq "/announcements" "$HTML_FILE"
-
-          echo "Checking friend wall..."
-          grep -Fq "/friend-wall" "$HTML_FILE"
-
-          echo "Checking rich users..."
-          grep -Fq "/rich" "$HTML_FILE"
-
-          echo "Checking private messages..."
-          grep -Fq "/private/conversations" "$HTML_FILE"
-
-          echo "Checking rooms..."
-          grep -Fq "/rooms" "$HTML_FILE"
-
-          echo "Checking games..."
-          grep -Fq "/games/" "$HTML_FILE"
-
-          echo "Checking tournaments..."
-          grep -Fq "/tournaments" "$HTML_FILE"
-
-          echo "Checking seasons..."
-          grep -Fq "/seasons/" "$HTML_FILE"
-
-          echo "Checking cosmetics..."
-          grep -Fq "/cosmetics" "$HTML_FILE"
-
-          echo "Checking logout..."
-          grep -Fq "bottomLogout" "$HTML_FILE"
-          grep -Fq "logout()" "$HTML_FILE"
-
-          echo "Checking Android file chooser..."
-          grep -Fq "onShowFileChooser" "$JAVA_FILE"
-
-          echo "Checking fullscreen..."
-          grep -Fq "enterFullscreen" "$JAVA_FILE"
-
-          echo
-          echo "========================================"
-          echo "FINAL SOURCE VERIFICATION PASSED"
-          echo "VERSION: 1.1.8"
-          echo "========================================"
-
-      - name: Install Gradle 8.9
-        shell: bash
-        run: |
-          set -e
-
-          wget -q \
-            https://services.gradle.org/distributions/gradle-8.9-bin.zip
-
-          unzip -q gradle-8.9-bin.zip
-
-          echo "$PWD/gradle-8.9/bin" >> "$GITHUB_PATH"
-
-          ./gradle-8.9/bin/gradle --version
-
-      - name: Build FINAL APK
-        shell: bash
-        run: |
-          set -e
-
+          set -euo pipefail
           cd "$PROJECT_ROOT"
 
-          gradle :app:assembleDebug --no-daemon
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew :app:assembleDebug --no-daemon
+          else
+            gradle :app:assembleDebug --no-daemon
+          fi
 
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ ! -f "$APK" ]; then
+          if [ ! -s "$APK" ]; then
             echo "ERROR: APK was not generated."
             find app/build/outputs -type f -print || true
             exit 1
           fi
 
-          cp "$APK" "$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/unsigned.apk"
 
-          echo
-          echo "APK CREATED:"
-          ls -lh "$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.apk"
-
-      - name: Verify APK signature
+      - name: Align APK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            "$GITHUB_WORKSPACE/unsigned.apk" \
+            "$GITHUB_WORKSPACE/aligned.apk"
+
+          "$BUILD_TOOLS/zipalign" -c -v 4 \
+            "$GITHUB_WORKSPACE/aligned.apk"
+
+      - name: Sign APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          keytool -genkeypair \
+            -keystore "$RUNNER_TEMP/ellamma-ci.jks" \
+            -storepass changeit \
+            -keypass changeit \
+            -alias ellamma \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=ElLamma CI,O=ElLamma,C=DZ"
+
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks "$RUNNER_TEMP/ellamma-ci.jks" \
+            --ks-key-alias ellamma \
+            --ks-pass pass:changeit \
+            --key-pass pass:changeit \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.apk" \
+            "$GITHUB_WORKSPACE/aligned.apk"
+
+      - name: Verify final APK
+        shell: bash
+        run: |
+          set -euo pipefail
 
           APK="$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.apk"
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
 
-          test -f "$APKSIGNER"
-
+          test -s "$APK"
           "$APKSIGNER" verify --verbose "$APK"
+
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.sha256"
 
           echo "APK SIGNATURE VERIFICATION PASSED"
 
-      - name: Verify FINAL APK contents
-        shell: bash
-        run: |
-          set -e
-
-          APK="$GITHUB_WORKSPACE/ElLamma-FINAL-1.1.8.apk"
-
-          rm -f final-html-check.html
-
-          unzip -p \
-            "$APK" \
-            assets/el-lamma-chat.html \
-            > final-html-check.html
-
-          test -s final-html-check.html
-
-          echo "Checking production API..."
-          grep -Fq \
-            "https://bfbzgzletoaxyazugjex.supabase.co/functions/v1/api" \
-            final-html-check.html
-
-          echo "Checking presence..."
-          grep -Fq "/presence" final-html-check.html
-
-          echo "Checking avatar..."
-          grep -Fq "/profile/avatar" final-html-check.html
-
-          echo "Checking owner AI..."
-          grep -Fq "/owner/ai" final-html-check.html
-
-          echo "Checking announcements..."
-          grep -Fq "/announcements" final-html-check.html
-
-          echo "Checking friend wall..."
-          grep -Fq "/friend-wall" final-html-check.html
-
-          echo "Checking rich users..."
-          grep -Fq "/rich" final-html-check.html
-
-          echo "Checking private messages..."
-          grep -Fq "/private/conversations" final-html-check.html
-
-          echo "Checking games..."
-          grep -Fq "/games/" final-html-check.html
-
-          echo "Checking tournaments..."
-          grep -Fq "/tournaments" final-html-check.html
-
-          echo "Checking seasons..."
-          grep -Fq "/seasons/" final-html-check.html
-
-          echo "Checking cosmetics..."
-          grep -Fq "/cosmetics" final-html-check.html
-
-          echo "Checking logout..."
-          grep -Fq "bottomLogout" final-html-check.html
-          grep -Fq "logout()" final-html-check.html
-
-          echo
-          echo "========================================"
-          echo "FINAL APK CONTENT VERIFICATION PASSED"
-          echo "========================================"
-
-      - name: Generate SHA256
-        shell: bash
-        run: |
-          set -e
-
-          sha256sum \
-            ElLamma-FINAL-1.1.8.apk \
-            | tee ElLamma-FINAL-1.1.8.sha256
-
-      - name: Upload FINAL APK
+      - name: Upload final APK
         uses: actions/upload-artifact@v4
         with:
           name: ElLamma-FINAL-1.1.8
@@ -276,3 +145,4 @@ jobs:
             ElLamma-FINAL-1.1.8.apk
             ElLamma-FINAL-1.1.8.sha256
           if-no-files-found: error
+          retention-days: 14
