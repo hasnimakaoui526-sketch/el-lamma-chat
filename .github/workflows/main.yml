@@ -1,31 +1,24 @@
 name: Android Release
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build Release APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract project ZIP
-        run: |
-          mkdir -p project
-          unzip -q ElLamma_FINAL_1.1.4.zip -d project
-
-      - name: Locate Android project
-        run: |
-          SETTINGS=$(find project -name settings.gradle -o -name settings.gradle.kts | head -n 1)
-          test -n "$SETTINGS"
-          echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
-
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -33,34 +26,24 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          yes | sdkmanager --licenses >/dev/null || true
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
 
       - name: Build Release APK
-        run: |
-          cd "$PROJECT_DIR"
-          chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon
+        run: ./gradlew :app:assembleRelease --no-daemon
 
       - name: Verify APK
         run: |
-          APK=$(find "$PROJECT_DIR/app/build/outputs/apk/release" -name "*.apk" | head -n 1)
-          test -n "$APK"
-          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/ElLamma-release-sha256.txt"
-          cp "$APK" "$GITHUB_WORKSPACE/ElLamma-release.apk"
+          test -f app/build/outputs/apk/release/app-release.apk
+          sha256sum app/build/outputs/apk/release/app-release.apk > app-release-sha256.txt
 
-      - name: Upload APK
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: ElLamma-Release
           path: |
-            ElLamma-release.apk
-            ElLamma-release-sha256.txt
+            app/build/outputs/apk/release/app-release.apk
+            app-release-sha256.txt
